@@ -317,7 +317,7 @@ sysd_configure_default_bridge(struct ovsdb_idl_txn *txn,
     struct ovsrec_bridge *default_bridge_row = NULL;
     struct ovsrec_port *port = NULL;
     struct ovsrec_interface *iface = NULL;
-    struct smap hw_intf_info;
+    struct smap hw_intf_info, user_config;
 
     /* Create bridge */
     default_bridge_row = ovsrec_bridge_insert(txn);
@@ -339,6 +339,13 @@ sysd_configure_default_bridge(struct ovsdb_idl_txn *txn,
              INTERFACE_HW_INTF_INFO_MAP_BRIDGE_TRUE);
     ovsrec_interface_set_hw_intf_info(iface, &hw_intf_info);
     smap_destroy(&hw_intf_info);
+
+    smap_init(&user_config);
+    smap_add(&user_config, INTERFACE_USER_CONFIG_MAP_ADMIN,
+             OVSREC_INTERFACE_USER_CONFIG_ADMIN_UP);
+
+    ovsrec_interface_set_user_config(iface, &user_config);
+    smap_destroy(&user_config);
 
     /* Create port for bridge */
     port = ovsrec_port_insert(txn);
