@@ -374,6 +374,9 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
     struct ovsrec_subsystem **ovs_subsys_l = NULL;
     struct ovsrec_system *sys = NULL;
     struct smap smap = SMAP_INITIALIZER(&smap);
+    FILE   *os_version = NULL;
+    char   file_var_name[64];
+    char   file_var_value[64];
 
     /* Add System row */
     sys = ovsrec_system_insert(txn);
@@ -434,6 +437,16 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
 
         ovsrec_system_set_daemons(sys, ovs_daemon_l, num_daemons);
     }
+    
+    // Open os-release file with the os version information
+    os_version = fopen(OS_RELEASE_FILE_PATH, "r");
+    while (fscanf(fp, "%s=%s", file_var_name, file_var_value) != EOF) {
+        // Write the switch version into the OVSDB
+        if (strcmp(file_var_name, OS_RELEASE_VAR_NAME) == 0) {
+           ovsrec_system_set_switch_version(sys, file_var_value);
+        }
+    }
+    fclose(os_version);
 
 } /* sysd_initial_configure */
 
