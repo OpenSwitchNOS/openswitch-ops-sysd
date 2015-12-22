@@ -381,9 +381,12 @@ sysd_configure_default_vrf(struct ovsdb_idl_txn *txn,
 
 }/* sysd_configure_default_vrf */
 
-/* Function to update the switch version of the OVSDB from the Release file*/
+/*
+ * Function to update the software info, e.g. software name, switch version,
+ * in the OVSDB retrieved from the Release file.
+ */
 static void
-sysd_update_switch_version(const struct ovsrec_system *cfg)
+sysd_update_sw_info(const struct ovsrec_system *cfg)
 {
     FILE   *os_ver_fp = NULL;
     char   *file_line = NULL;
@@ -392,6 +395,7 @@ sysd_update_switch_version(const struct ovsrec_system *cfg)
     char   build_id_value[32] = "";
     char   version_id_value[32] = "";
     size_t line_len;
+    struct smap smap;
 
     /* Open os-release file with the os version information */
     os_ver_fp = fopen(OS_RELEASE_FILE_PATH, "r");
@@ -400,9 +404,17 @@ sysd_update_switch_version(const struct ovsrec_system *cfg)
         return;
     }
 
+    smap_init(&smap);
+
     /* Scanning file for variables */
     while (getline(&file_line, &line_len, os_ver_fp) != -1) {
         sscanf(file_line, "%[^=]=%s", file_var_name, file_var_value);
+
+        /* Release name value.  */
+        if (strcmp(file_var_name, OS_RELEASE_NAME) == 0
+            && file_var_value[0] != '\0') {
+            smap_add(&smap, SYSTEM_SOFTWARE_INFO_NAME, file_var_value);
+        }
 
         /* Version ID value*/
         if (strcmp(file_var_name, OS_RELEASE_VERSION_NAME) == 0) {
@@ -413,8 +425,17 @@ sysd_update_switch_version(const struct ovsrec_system *cfg)
         if (strcmp(file_var_name, OS_RELEASE_BUILD_NAME) == 0) {
             strcpy(build_id_value, file_var_value);
         }
+
+	/* Avoid the value carry over. */
+        file_var_value[0] = '\0';
     }
     fclose(os_ver_fp);
+
+    /* Update the software info column. */
+    if (!smap_is_empty(&smap)) {
+        ovsrec_system_set_software_info(cfg, &smap);
+    }
+    smap_destroy(&smap);
 
     /* Check if version id and build id was found*/
     if ( (strlen(build_id_value) != 0) && (strlen(version_id_value) != 0) ) {
@@ -431,7 +452,7 @@ sysd_update_switch_version(const struct ovsrec_system *cfg)
         return;
     }
 
-} /* sysd_update_switch_version */
+} /* sysd_update_sw_info */
 
 void
 sysd_initial_configure(struct ovsdb_idl_txn *txn)
@@ -504,8 +525,11 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
         ovsrec_system_set_daemons(sys, ovs_daemon_l, num_daemons);
     }
 
-    /* Update the switch version for the new config */
-    sysd_update_switch_version(sys);
+    /*
+     * Update the software info, including the switch version,
+     * for the new config
+     */
+    sysd_update_sw_info(sys);
 
 } /* sysd_initial_configure */
 
@@ -640,8 +664,8 @@ sysd_run(void)
             }
             ovsdb_idl_txn_destroy(txn);
         } else {
-            /* Static function to read the os-release function */
-            sysd_update_switch_version(cfg);
+            /* Update the software information. */
+            sysd_update_sw_info(cfg);
 
             if (!hw_init_done_set) {
                 sysd_chk_if_hw_daemons_done();
