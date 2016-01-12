@@ -2,7 +2,7 @@
 
 [TOC]
 
-##  image manifest read ##
+## image manifest read ##
 ### Objective ###
 Verify that sysd correctly processes the image.manifest file.
 ### Requirements ###
