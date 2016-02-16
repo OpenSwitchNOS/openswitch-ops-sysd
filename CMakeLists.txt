@@ -89,3 +89,6 @@ install(TARGETS ${SYSD}
 # This is just temporary parking space until we find it better home.
 install(FILES files/image.manifest
         DESTINATION etc/openswitch)
+
+install(FILES ../../build/version_detail
+        DESTINATION etc/)
