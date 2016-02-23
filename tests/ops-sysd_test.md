@@ -4,6 +4,7 @@
 - [Image manifest read test](#image-manifest-read-test)
 - [Hardware description file read test](#hardware-description-files-read-test)
 - [/etc/os-release file read test](#etcos-release-file-read-test)
+- [Source_Repository table initialization test](#Source_Repository-table-initialization-test)
 
 
 ## Image manifest read test
@@ -109,3 +110,31 @@ Virtual Mininet Test Setup.
 #### Test fail criteria
 Verify that the switch version in the OVSDB matches the appropriate
 /etc/os-release NAME, VERSION\_ID, and BUILD\_ID.
+
+## Source_Repository table initialization test
+
+### Objective
+Verify that Source_Repository table is populated during sysd initialization
+phase
+
+### Requirements
+Virtual Mininet Test Setup.
+
+### Setup
+#### Topology diagram
+```
+  [s1]
+```
+
+### Description
+1. Read the contents of Source_Repository table from OVSDB
+2. Verify if "ops-sysd" can be found in Source_Repository table. (As an entry
+   for "ops-sysd" repository will always be present in Source_Repository table
+   if it was populated correctly during sysd initialization.
+
+### Test result criteria
+#### Test pass criteria
+"ops-sysd" was found in Source_Repository table
+
+#### Test fail criteria
+"ops-sysd" was not found in Source_Repository table
