@@ -382,6 +382,77 @@ sysd_configure_default_vrf(struct ovsdb_idl_txn *txn,
 }/* sysd_configure_default_vrf */
 
 /*
+ * Function to populate version of each package/daemon extracted from
+ * image.manifest file to "Source_Repository" table in OVSDB.
+ */
+static void
+sysd_add_src_repo_hash(struct ovsdb_idl_txn *status_txn)
+{
+    FILE   *ver_detail_fp = NULL;
+    char   *file_line     = NULL;
+    char   *p_version     = NULL;
+    char   name[64]       = "";
+    char   version[128]   = "";
+    char   column2[64]    = "";
+    size_t line_len       = 0;
+    struct ovsrec_source_repository *src_repo_row = NULL;
+
+    /* Open image.manifest file containing version information. */
+    ver_detail_fp = fopen(VERSION_DETAIL_FILE_PATH, "r");
+    if (NULL == ver_detail_fp) {
+        VLOG_ERR("File %s was not found", VERSION_DETAIL_FILE_PATH);
+        return;
+    }
+
+    /*
+     * Parse image.manifest file line-wise to extract repository name and
+     * corresponding version.
+     */
+    while (getline(&file_line, &line_len, ver_detail_fp) != -1) {
+        sscanf(file_line, "%s %s %s", name, column2, version);
+
+        if (NULL == status_txn) {
+            return;
+        }
+
+        src_repo_row = ovsrec_source_repository_insert(status_txn);
+
+        if (NULL == src_repo_row) {
+            VLOG_ERR("Could not insert a row into DB\n");
+            return;
+        }
+
+        /* Set Source Repository name value */
+        ovsrec_source_repository_set_name(src_repo_row, name);
+
+        /* Set Source Repository version type and version */
+        p_version = strstr(version, "git");
+        if (p_version) {
+            ovsrec_source_repository_set_version_type(src_repo_row, "git");
+            p_version = strstr(version, "git999");
+            if (p_version)
+                ovsrec_source_repository_set_version(src_repo_row, "local changes");
+            p_version = strstr(version, "git0+");
+            if (p_version && ((p_version+5) - version < 128)) {
+                /* Extract version value which is past "git0+" */
+                p_version += 5;
+                ovsrec_source_repository_set_version(src_repo_row, p_version);
+            }
+        } else {
+            ovsrec_source_repository_set_version_type(src_repo_row, "other");
+            ovsrec_source_repository_set_version(src_repo_row, version);
+        }
+    }
+
+    /* Free the memory allocated by getline() */
+    if (NULL != file_line) {
+        free(file_line);
+    }
+    fclose(ver_detail_fp);
+
+} /* sysd_add_src_repo_hash */
+
+/*
  * Function to update the software info, e.g. software name, switch version,
  * in the OVSDB retrieved from the Release file.
  */
@@ -543,6 +614,9 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
      */
     sysd_update_sw_info(sys);
 
+    /* Populate git-hashes of source-repositories. */
+    sysd_add_src_repo_hash(txn);
+
 } /* sysd_initial_configure */
 
 static void
@@ -678,6 +752,16 @@ sysd_run(void)
         } else {
             /* Update the software information. */
             sysd_update_sw_info(cfg);
+
+            txn = ovsdb_idl_txn_create(idl);
+
+            sysd_add_src_repo_hash(txn);
+
+            txn_status = ovsdb_idl_txn_commit_block(txn);
+            if (txn_status != TXN_SUCCESS) {
+                VLOG_ERR("Failed to commit the transaction. rc = %u", txn_status);
+            }
+            ovsdb_idl_txn_destroy(txn);
 
             if (!hw_init_done_set) {
                 sysd_chk_if_hw_daemons_done();
