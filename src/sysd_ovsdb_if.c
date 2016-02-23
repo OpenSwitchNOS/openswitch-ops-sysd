@@ -382,6 +382,94 @@ sysd_configure_default_vrf(struct ovsdb_idl_txn *txn,
 }/* sysd_configure_default_vrf */
 
 /*
+ * Function to populate source uri and version of each package/daemon
+ * extracted from /var/lib/version_detail file to "Source_Repository"
+ * table in OVSDB.
+ */
+static void
+sysd_add_src_repo_hash(struct ovsdb_idl_txn *status_txn)
+{
+    FILE   *ver_detail_fp = NULL;
+    char   *file_line     = NULL;
+    char   *p_field       = NULL;
+    char   name[64]       = "";
+    char   src_uri[128]   = "";
+    char   version[128]   = "";
+    char   git_hash[128]  = "";
+    size_t line_len       = 0;
+    struct ovsrec_source_repository *src_repo_row = NULL;
+
+    /* Open version_detail file containing version information. */
+    ver_detail_fp = fopen(VERSION_DETAIL_FILE_PATH, "r");
+    if (NULL == ver_detail_fp) {
+        VLOG_ERR("File %s was not found", VERSION_DETAIL_FILE_PATH);
+        return;
+    }
+
+    /*
+     * Parse version_detail file line-wise to extract package/daemon name,
+     * corresponding version and its source-URI.
+     */
+    while (getline(&file_line, &line_len, ver_detail_fp) != -1) {
+        sscanf(file_line, "%s %s %s %s", name, git_hash, version, src_uri);
+
+        if (NULL == status_txn) {
+            return;
+        }
+
+        src_repo_row = ovsrec_source_repository_insert(status_txn);
+
+        if (NULL == src_repo_row) {
+            VLOG_ERR("Could not insert a row into DB\n");
+            return;
+        }
+
+        /* Set Source_Repository name value */
+        p_field = strstr(name, "PKG=");
+        if (p_field && ((p_field + strlen("PKG=")) - name < 64)) {
+            p_field += strlen("PKG=");
+            ovsrec_source_repository_set_name(src_repo_row, p_field);
+        }
+
+        /* Set Source_Repository version value */
+        p_field = strstr(git_hash, "SRCREV=INVALID");
+        if (NULL == p_field) {
+            p_field = strstr(git_hash, "SRCREV=");
+            if (p_field && ((p_field + strlen("SRCREV=")) - git_hash < 128)) {
+                p_field += strlen("SRCREV=");
+                ovsrec_source_repository_set_version(src_repo_row, p_field);
+            }
+        } else {
+            p_field = strstr(version, "PV=");
+            if (p_field && ((p_field + strlen("PV=")) - version < 128)) {
+                p_field += strlen("PV=");
+                ovsrec_source_repository_set_version(src_repo_row, p_field);
+            }
+        }
+
+        /* Set Source_Repository src_uri value */
+        p_field = strstr(src_uri, "SRC_URI=");
+        if (p_field && ((p_field + strlen("SRC_URI=")) - src_uri < 128)) {
+            p_field += strlen("SRC_URI=");
+            ovsrec_source_repository_set_src_uri(src_repo_row, p_field);
+        }
+
+        /* Reset values */
+        name[0]     = '\0';
+        git_hash[0] = '\0';
+        version[0]  = '\0';
+        src_uri[0]  = '\0';
+    }
+
+    /* Free the memory allocated by getline() */
+    if (NULL != file_line) {
+        free(file_line);
+    }
+    fclose(ver_detail_fp);
+
+} /* sysd_add_src_repo_hash */
+
+/*
  * Function to update the software info, e.g. software name, switch version,
  * in the OVSDB retrieved from the Release file.
  */
@@ -543,6 +631,9 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
      */
     sysd_update_sw_info(sys);
 
+    /* Populate source uri and version of packages/daemon present in image */
+    sysd_add_src_repo_hash(txn);
+
 } /* sysd_initial_configure */
 
 static void
@@ -678,6 +769,17 @@ sysd_run(void)
         } else {
             /* Update the software information. */
             sysd_update_sw_info(cfg);
+
+            txn = ovsdb_idl_txn_create(idl);
+
+            /* Populate source uri and version of packages/daemon present in image */
+            sysd_add_src_repo_hash(txn);
+
+            txn_status = ovsdb_idl_txn_commit_block(txn);
+            if (txn_status != TXN_SUCCESS) {
+                VLOG_ERR("Failed to commit the transaction. rc = %u", txn_status);
+            }
+            ovsdb_idl_txn_destroy(txn);
 
             if (!hw_init_done_set) {
                 sysd_chk_if_hw_daemons_done();
