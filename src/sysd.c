@@ -258,6 +258,15 @@ sysd_ovsdb_conn_init(char *remote)
 
     /* Management Interface Column*/
     ovsdb_idl_add_column(idl, &ovsrec_system_col_mgmt_intf);
+
+    /* Source Repository Table */
+    ovsdb_idl_add_table(idl, &ovsrec_table_source_repository);
+    ovsdb_idl_add_column(idl, &ovsrec_source_repository_col_name);
+    ovsdb_idl_omit_alert(idl, &ovsrec_source_repository_col_name);
+    ovsdb_idl_add_column(idl, &ovsrec_source_repository_col_version_type);
+    ovsdb_idl_omit_alert(idl, &ovsrec_source_repository_col_version_type);
+    ovsdb_idl_add_column(idl, &ovsrec_source_repository_col_version);
+    ovsdb_idl_omit_alert(idl, &ovsrec_source_repository_col_version);
     return;
 
 } /* sysd_ovsdb_conn_init */
