@@ -49,7 +49,7 @@ configure_file (${PROJECT_SOURCE_DIR}/${INCL_DIR}/sysd_util.h.in
 # Rules to locate needed libraries
 include(FindPkgConfig)
 pkg_check_modules(ZLIB REQUIRED zlib)
-pkg_check_modules(CONFIG_YAML REQUIRED ops-config-yaml)
+pkg_check_modules(CONFIG_YAML REQUIRED ops-hw-config)
 pkg_check_modules(OPSUTILS REQUIRED opsutils)
 pkg_check_modules(OVSCOMMON REQUIRED libovscommon)
 pkg_check_modules(OVSDB REQUIRED libovsdb)
