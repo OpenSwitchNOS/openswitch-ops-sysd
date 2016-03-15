@@ -649,9 +649,6 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
      */
     sysd_update_sw_info(sys);
 
-    /* Populate source url and version of packages/daemon present in image */
-    sysd_add_package_info(txn);
-
 } /* sysd_initial_configure */
 
 static void
@@ -788,21 +785,20 @@ sysd_run(void)
             /* Update the software information. */
             sysd_update_sw_info(cfg);
 
-            txn = ovsdb_idl_txn_create(idl);
-
-            /* Populate source url and version of packages/daemon present in image */
-            sysd_add_package_info(txn);
-
-            txn_status = ovsdb_idl_txn_commit_block(txn);
-            if (txn_status != TXN_SUCCESS) {
-                VLOG_ERR("Failed to commit the transaction. rc = %u", txn_status);
-            }
-            ovsdb_idl_txn_destroy(txn);
-
             if (!hw_init_done_set) {
                 sysd_chk_if_hw_daemons_done();
             }
         }
+
+        txn = ovsdb_idl_txn_create(idl);
+        /* Populate source url and version of packages present in image */
+        VLOG_INFO("Populating package_info\n");
+        sysd_add_package_info(txn);
+        txn_status = ovsdb_idl_txn_commit_block(txn);
+        if (txn_status != TXN_SUCCESS) {
+            VLOG_ERR("Failed to commit the transaction. rc = %u", txn_status);
+        }
+        ovsdb_idl_txn_destroy(txn);
     }
 
     /* Notify parent of startup completion. */
