@@ -40,16 +40,34 @@
 
 #include <ops-utils.h>
 #include <config-yaml.h>
+#include <yaml.h>
 #include "sysd.h"
 #include "sysd_util.h"
 #include "sysd_ovsdb_if.h"
-
-#define PKG_INFO_MAX_LEN 128
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_if);
 
 /** @ingroup sysd
  * @{ */
+
+enum {
+    VALUE,
+    PKG,
+    PV,
+    SRCREV,
+    SRC_URL,
+    TYPE,
+    MAX_NUM_KEYS
+};
+
+const char * keystr_pkg_info[MAX_NUM_KEYS] = {
+    "values",
+    "PKG",
+    "PV",
+    "SRCREV",
+    "SRC_URL",
+    "TYPE",
+};
 
 extern char *g_hw_desc_dir;
 
@@ -386,32 +404,58 @@ sysd_configure_default_vrf(struct ovsdb_idl_txn *txn,
 }/* sysd_configure_default_vrf */
 
 /*
+ * Helper function to parse version_detail yaml file.
+ */
+static int
+package_info_mapping_check_key(const char *data)
+{
+    int i = PKG;
+    for (i = PKG; i < MAX_NUM_KEYS; i++) {
+        if ((data != NULL) && (keystr_pkg_info[i] != NULL) &&
+            (!strcmp(keystr_pkg_info[i], data))) {
+            return i;
+        }
+    }
+    /* Data didn't match any of the token names, hence it should be a value */
+    return VALUE;
+}
+
+/*
  * Function to populate source url, type and version of each package/daemon
- * extracted from /var/lib/version_detail file to "Package_Info"
+ * extracted from /var/lib/version_detail.yaml file to "Package_Info"
  * table in OVSDB.
  */
 static void
 sysd_add_package_info(struct ovsdb_idl_txn *status_txn)
 {
-    FILE   *ver_detail_fp              = NULL;
-    char   *file_line                  = NULL;
-    char   *p_field                    = NULL;
-    char   name[PKG_INFO_MAX_LEN]      = "";
-    char   type[PKG_INFO_MAX_LEN]      = "";
-    char   src_url[PKG_INFO_MAX_LEN]   = "";
-    char   version[PKG_INFO_MAX_LEN]   = "";
-    char   git_hash[PKG_INFO_MAX_LEN]  = "";
-    size_t line_len                    = 0;
+    FILE * fh         = NULL;
+    int event_value   = 0;
+    int current_state = 0;
+    yaml_parser_t parser;
+    yaml_event_t event;
     struct ovsrec_package_info *row = NULL;
 
-    /* Open version_detail file containing version information. */
-    ver_detail_fp = fopen(VERSION_DETAIL_FILE_PATH, "r");
-    if (NULL == ver_detail_fp) {
-        VLOG_ERR("File %s was not found", VERSION_DETAIL_FILE_PATH);
+    /* Initialize parser */
+    if (!yaml_parser_initialize(&parser)) {
+        VLOG_ERR("Failed to initialize parser\n");
         return;
     }
 
-    if (NULL == status_txn) {
+    /* Open /var/lib/version_detail.yaml file */
+    fh = fopen(VERSION_DETAIL_FILE_PATH, "r");
+    if (NULL == fh) {
+        VLOG_ERR("Failed to open file %s\n",VERSION_DETAIL_FILE_PATH);
+        yaml_parser_delete(&parser);
+        return;
+    }
+
+    /* Set input file */
+    yaml_parser_set_input_file(&parser, fh);
+
+    if (!yaml_parser_parse(&parser, &event)) {
+        VLOG_ERR("Parser error %d\n", parser.error);
+        yaml_parser_delete(&parser);
+        fclose(fh);
         return;
     }
 
@@ -419,71 +463,85 @@ sysd_add_package_info(struct ovsdb_idl_txn *status_txn)
      * Parse version_detail file line-wise to extract package/daemon name,
      * corresponding type, version and its source-URL.
      */
-    while (getline(&file_line, &line_len, ver_detail_fp) != -1) {
-        sscanf(file_line, "%s %s %s %s %s", name, git_hash, version, type, src_url);
 
-        row = ovsrec_package_info_insert(status_txn);
-
-        if (NULL == row) {
-            VLOG_ERR("Could not insert a row into DB\n");
-            return;
-        }
-
-        /* Set Package_Info name value */
-        p_field = strstr(name, "PKG=");
-        if (p_field && ((p_field + strlen("PKG="))
-            - name < PKG_INFO_MAX_LEN)) {
-            p_field += strlen("PKG=");
-            ovsrec_package_info_set_name(row, p_field);
-        }
-
-        /* Set Package_Info version value */
-        p_field = strstr(git_hash, "SRCREV=INVALID");
-        if (NULL == p_field) {
-            p_field = strstr(git_hash, "SRCREV=");
-            if (p_field && ((p_field + strlen("SRCREV="))
-                - git_hash < PKG_INFO_MAX_LEN)) {
-                p_field += strlen("SRCREV=");
-                ovsrec_package_info_set_version(row, p_field);
+    while (event.type != YAML_STREAM_END_EVENT) {
+        if (event.type == YAML_SCALAR_EVENT) {
+            event_value = package_info_mapping_check_key ((const char *)
+            event.data.scalar.value);
+            switch (event_value) {
+                case VALUE:
+                {
+                    switch(current_state) {
+                        case PKG:
+                            row = ovsrec_package_info_insert(status_txn);
+                            if (NULL == row) {
+                                VLOG_ERR("Could not insert a row into DB\n");
+                                /* Cleanup */
+                                yaml_event_delete(&event);
+                                yaml_parser_delete(&parser);
+                                fclose(fh);
+                                return;
+                            }
+                            ovsrec_package_info_set_name(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case PV:
+                            ovsrec_package_info_set_version(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case SRCREV:
+                            if(strcmp(
+                            (const char*)event.data.scalar.value,
+                            "INVALID")) {
+                                ovsrec_package_info_set_version(row,
+                                (const char *)event.data.scalar.value);
+                            }
+                            break;
+                        case SRC_URL:
+                            ovsrec_package_info_set_src_url(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case TYPE:
+                            ovsrec_package_info_set_src_type(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                    }
+                }
+                break;
+                case PKG:
+                    current_state = PKG;
+                    break;
+                case PV:
+                    current_state = PV;
+                    break;
+                case SRCREV:
+                    current_state = SRCREV;
+                    break;
+                case SRC_URL:
+                    current_state = SRC_URL;
+                    break;
+                case TYPE:
+                    current_state = TYPE;
+                    break;
             }
-        } else {
-            p_field = strstr(version, "PV=");
-            if (p_field && ((p_field + strlen("PV="))
-                - version < PKG_INFO_MAX_LEN)) {
-                p_field += strlen("PV=");
-                ovsrec_package_info_set_version(row, p_field);
-            }
+        }
+        if (event.type != YAML_STREAM_END_EVENT) {
+            VLOG_ERR("Stream end\n");
+            yaml_event_delete(&event);
         }
 
-        /* Set Package_Info src_type value */
-        p_field = strstr(type, "TYPE=");
-        if (p_field && ((p_field + strlen("TYPE="))
-            - type < PKG_INFO_MAX_LEN)) {
-            p_field += strlen("TYPE=");
-            ovsrec_package_info_set_src_type(row, p_field);
+        if (!yaml_parser_parse(&parser, &event)) {
+            VLOG_ERR("Parser error %d\n", parser.error);
+            yaml_parser_delete(&parser);
+            fclose(fh);
         }
-
-        /* Set Package_Info src_url value */
-        p_field = strstr(src_url, "SRC_URL=");
-        if (p_field && ((p_field + strlen("SRC_URL="))
-            - src_url < PKG_INFO_MAX_LEN)) {
-            p_field += strlen("SRC_URL=");
-            ovsrec_package_info_set_src_url(row, p_field);
-        }
-
-        /* Reset values */
-        name[0]     = '\0';
-        type[0]     = '\0';
-        git_hash[0] = '\0';
-        version[0]  = '\0';
-        src_url[0]  = '\0';
     }
 
-    /* Free the memory allocated by getline() */
-    if (NULL != file_line) {
-        free(file_line);
-    }
-    fclose(ver_detail_fp);
+    yaml_event_delete(&event);
+
+    /* Cleanup */
+    yaml_parser_delete(&parser);
+    fclose(fh);
 
 } /* sysd_add_package_info */
 
