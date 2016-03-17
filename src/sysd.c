@@ -44,6 +44,8 @@
 #include "sysd_util.h"
 #include "sysd_ovsdb_if.h"
 
+#include "eventlog.h"
+
 VLOG_DEFINE_THIS_MODULE(ops_sysd);
 
 /** @ingroup ops-sysd
@@ -388,6 +390,8 @@ main(int argc, char *argv[])
     /* Fork and return in child process; but don't notify parent of
      * startup completion yet. */
     daemonize_start();
+
+    event_log_init("SYS");
 
     /* Create UDS connection for ovs-appctl. */
     rc = unixctl_server_create(appctl_path, &appctl);
