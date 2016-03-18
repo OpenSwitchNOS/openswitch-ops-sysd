@@ -252,3 +252,6 @@ class TestRunner:
 
     def test_long_version(self):
         self.test.check_switch_version("os-release.long-name-and-build-id")
+
+    def test_no_build_id(self):
+        self.test.check_os_name("os-release.no-build-id")

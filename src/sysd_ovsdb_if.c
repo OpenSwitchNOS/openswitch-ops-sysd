@@ -512,6 +512,9 @@ sysd_update_sw_info(const struct ovsrec_system *cfg)
         return;
     }
 
+    /* Initialize the version_id and build_id to avoid the ops-sysd crash */
+    version_id[0] = build_id[0] = '\0';
+
     /* Scanning file for variables */
     file_var_name[0] = file_var_value[0] = '\0';
     while (getline(&file_line, &line_len, os_ver_fp) != -1) {
