@@ -309,6 +309,74 @@ sysd_initial_subsystem_add(struct ovsdb_idl_txn *txn, sysd_subsystem_t *subsys_p
 
 } /* sysd_initial_subsystem_add */
 
+bool
+sysd_initial_system_health_add(const struct ovsrec_system *sys,
+                              struct ovsdb_idl_txn *txn)
+{
+    struct smap                 cpu_usage;
+    struct smap                 memory_usage;
+    struct ovsrec_system_health *ovs_sys_health = NULL;
+    struct ovsrec_system_health **ovs_sys_health_l = NULL;
+
+    /* Add a row to System_Health table */
+    ovs_sys_health_l = SYSD_OVS_PTR_CALLOC(ovsrec_system_health *, 1);
+    if (ovs_sys_health_l == NULL) {
+        VLOG_ERR("Failed to allocate memory for OVSDB system_health.");
+        return false;
+    }
+
+    ovs_sys_health = ovsrec_system_health_insert(txn);
+    ovs_sys_health_l[0] = ovs_sys_health;
+
+    //ovsrec_system_health_set_poll_timer(ovs_sys_health, 10);
+#define DEFAULT_INIT_COUNTER_VALUE 0
+    /* Set cpu_usage */
+    smap_init(&cpu_usage);
+    smap_add_format(&cpu_usage, "avg_for_last_1_min",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "avg_for_last_5_min",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "avg_for_last_15_min",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "user_process_run",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "kernel_process_run",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "waiting_on_io_completion",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "servicing_hw_interrupts",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&cpu_usage, "servicing_sw_interrupts",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    ovsrec_system_health_set_cpu_usage(ovs_sys_health, &cpu_usage);
+    smap_destroy(&cpu_usage);
+
+    /* Set memory_usage */
+    smap_init(&memory_usage);
+    smap_add_format(&memory_usage, "phys_total_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "phys_free_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "phys_used_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "phys_buffer_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "virt_total_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "virt_free_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "virt_used_memory_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    smap_add_format(&memory_usage, "virt_buffer_size",
+                    "%d", DEFAULT_INIT_COUNTER_VALUE);
+    ovsrec_system_health_set_memory_usage(ovs_sys_health, &memory_usage);
+    smap_destroy(&memory_usage);
+
+    ovsrec_system_set_system_health(sys, ovs_sys_health);
+
+    return true;
+} /* sysd_initial_system_health_add */
+
 /*
  * This function is used to initialize the default bridge during system bootup.
  */
@@ -623,7 +691,7 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
     tmp_p = ops_ether_ulong_long_to_string(mac_addr, subsystems[0]->system_mac_addr);
     ovsrec_system_set_system_mac(sys, tmp_p);
 
-    /* Add the subsystem info to OVSD */
+    /* Add the subsystem info to OVSDB */
     ovs_subsys_l = SYSD_OVS_PTR_CALLOC(ovsrec_subsystem *, num_subsystems);
     if (ovs_subsys_l == NULL) {
         VLOG_ERR("Failed to allocate memory for OVS subsystem.");
@@ -635,6 +703,9 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
     }
 
     ovsrec_system_set_subsystems(sys, ovs_subsys_l, num_subsystems);
+
+    /* Add system health table */
+    sysd_initial_system_health_add(sys, txn);
 
     /* Add the daemon info to the daemon table */
     ovs_daemon_l = SYSD_OVS_PTR_CALLOC(ovsrec_daemon *, num_daemons);

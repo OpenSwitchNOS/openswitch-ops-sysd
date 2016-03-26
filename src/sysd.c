@@ -269,6 +269,16 @@ sysd_ovsdb_conn_init(char *remote)
     ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_src_url);
     ovsdb_idl_add_column(idl, &ovsrec_package_info_col_version);
     ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_version);
+
+    /* System_Health Table */
+    ovsdb_idl_add_table(idl, &ovsrec_table_system_health);
+    ovsdb_idl_add_column(idl, &ovsrec_system_health_col_poll_timer);
+    ovsdb_idl_omit_alert(idl, &ovsrec_system_health_col_poll_timer);
+    ovsdb_idl_add_column(idl, &ovsrec_system_health_col_cpu_usage);
+    ovsdb_idl_omit_alert(idl, &ovsrec_system_health_col_cpu_usage);
+    ovsdb_idl_add_column(idl, &ovsrec_system_health_col_memory_usage);
+    ovsdb_idl_omit_alert(idl, &ovsrec_system_health_col_memory_usage);
+
     return;
 
 } /* sysd_ovsdb_conn_init */
