@@ -588,7 +588,11 @@ qos_init_default_dscp_map(
         set_dscp_map_entry(dscp_map[ii],
                            yaml_dscp_map_entry->code_point,
                            yaml_dscp_map_entry->local_priority,
+#ifdef QOS_CAPABILITY_DSCP_MAP_COS_REMARK_DISABLED
+                           0,
+#else
                            yaml_dscp_map_entry->priority_code_point,
+#endif
                            yaml_dscp_map_entry->color,
                            yaml_dscp_map_entry->description);
     }
