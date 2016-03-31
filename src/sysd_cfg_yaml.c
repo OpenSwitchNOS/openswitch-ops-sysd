@@ -87,6 +87,8 @@ sysd_cfg_yaml_init(char *hw_desc_dir)
     rc = yaml_parse_fru(cfg_yaml_handle, BASE_SUBSYSTEM);
     if (0 > rc) {
         VLOG_ERR("Failed to parse fru yaml config file");
+        return (false);
+    }
 #endif
     rc = yaml_parse_qos(cfg_yaml_handle, BASE_SUBSYSTEM);
     if (0 > rc) {
