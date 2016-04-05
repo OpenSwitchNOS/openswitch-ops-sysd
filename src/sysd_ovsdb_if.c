@@ -156,13 +156,40 @@ sysd_initial_interface_add(struct ovsdb_idl_txn *txn,
         cap_p++;
     }
 
-    /* All the interfaces in a subsystem uses the same MAC address.
-     * Copy the subsystem system MAC to interface hw_info:mac_addres.
+    /* each interface will have unique mac address.
+       below code will assign mac address to non-split ports.
      */
-    if (subsys_ptr->system_mac_addr) {
-        memset(buf, 0, sizeof(buf));
-        tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->system_mac_addr);
-        smap_add(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+    if ((NULL == intf_ptr->subports[0]) && (NULL == intf_ptr->parent_port)) {
+        if (subsys_ptr->num_free_macs > 0) {
+            /* free macs available in system.
+               assign unique mac to interface.
+             */
+            memset(buf, 0, sizeof(buf));
+            tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->nxt_mac_addr);
+            smap_add(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+            /* decrement num_free_macs as we have consumed one.
+               below decrement never goes negative as we have reached here
+               with num_free_macs >= 1 but not 0.
+             */
+            subsys_ptr->num_free_macs--;
+            /* if num_free_macs >=1 increment nxt_mac_addr,
+               else point next_mac_addr to system_mac.
+             */
+            if (subsys_ptr->num_free_macs) {
+                subsys_ptr->nxt_mac_addr++;
+            }
+            else {
+                subsys_ptr->nxt_mac_addr = subsys_ptr->system_mac_addr;
+            }
+        }
+        else {
+            /* free macs unavailable in system.
+               assign system mac to interface.
+             */
+            memset(buf, 0, sizeof(buf));
+            tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->system_mac_addr);
+            smap_add(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+        }
     }
 
     ovsrec_interface_set_hw_intf_info(ovs_intf, &hw_intf_info);
@@ -189,6 +216,9 @@ sysd_set_splittable_port_info(struct ovsrec_interface **ovs_intf, sysd_subsystem
     int                 i = 0;
     sysd_intf_info_t    *intf_ptr = NULL;
     struct shash        ovs_intf_shash = SHASH_INITIALIZER(&ovs_intf_shash);
+    struct smap         hw_intf_info;
+    char                buf[128];
+    char                *tmp_p;
 
     for (i = 0; i < subsys_ptr->intf_count; i++) {
         intf_ptr = subsys_ptr->interfaces[i];
@@ -218,6 +248,53 @@ sysd_set_splittable_port_info(struct ovsrec_interface **ovs_intf, sysd_subsystem
         if (intf_ptr->subports[0] != NULL) {
             struct ovsrec_interface *subports[SYSD_MAX_SPLIT_PORTS];
             int j = 0, k = 0;
+            struct ovsrec_interface *intf_parent;
+            uint64_t parent_mac_addr = 0;
+
+            intf_parent = shash_find_data(&ovs_intf_shash, intf_ptr->name);
+            if (intf_parent != NULL) {
+                smap_clone(&hw_intf_info, &intf_parent->hw_intf_info);
+
+                /* assign mac address to parent QSFP port*/
+                if (subsys_ptr->num_free_macs > 0) {
+                    /* free macs available in system.
+                       assign unique mac to  parent interface.
+                     */
+                    memset(buf, 0, sizeof(buf));
+                    tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->nxt_mac_addr);
+                    smap_replace(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+                    parent_mac_addr = subsys_ptr->nxt_mac_addr;
+                    /* decrement num_free_macs as we have consumed one.
+                       below decrement never goes negative as we have reached here
+                       with num_free_macs >= 1 but not 0.
+                     */
+                    subsys_ptr->num_free_macs--;
+                    /* if num_free_macs >=1 increment nxt_mac_addr,
+                       else point next_mac_addr to system_mac.
+                     */
+                    if (subsys_ptr->num_free_macs) {
+                        subsys_ptr->nxt_mac_addr++;
+                    }
+                    else {
+                        subsys_ptr->nxt_mac_addr = subsys_ptr->system_mac_addr;
+                    }
+                }
+                else {
+                    /* free macs unavailable in system.
+                       assign system mac to  parent interface.
+                     */
+                    memset(buf, 0, sizeof(buf));
+                    tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->system_mac_addr);
+                    smap_replace(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+                    parent_mac_addr = subsys_ptr->system_mac_addr;
+                }
+
+                ovsrec_interface_set_hw_intf_info(intf_parent, &hw_intf_info);
+                smap_destroy(&hw_intf_info);
+            } else {
+                VLOG_WARN("Unable to find parent port %s",
+                          intf_ptr->name);
+            }
 
             while(intf_ptr->subports[k] != NULL) {
                 subports[j] = shash_find_data(&ovs_intf_shash, intf_ptr->subports[k]);
@@ -225,6 +302,54 @@ sysd_set_splittable_port_info(struct ovsrec_interface **ovs_intf, sysd_subsystem
                     VLOG_WARN("Unable to find subport %s of port %s",
                               intf_ptr->subports[k], intf_ptr->name);
                 } else {
+                    /* assign mac address to subport */
+                    if (j > 0) {
+                        /* assign mac address to QSFP subport numbers 2,3,4 */
+                        if (subsys_ptr->num_free_macs > 0) {
+                            /* free macs available in system.
+                               assign unique mac to split interface.
+                             */
+                            smap_clone(&hw_intf_info, &subports[j]->hw_intf_info);
+                            memset(buf, 0, sizeof(buf));
+                            tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->nxt_mac_addr);
+                            smap_replace(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+                            /* decrement num_free_macs as we have consumed one.
+                               below decrement never goes negative as we have reached here
+                               with num_free_macs >= 1 but not 0.
+                             */
+                            subsys_ptr->num_free_macs--;
+                            /* if num_free_macs >=1 increment nxt_mac_addr,
+                               else point next_mac_addr to system_mac.
+                             */
+                            if (subsys_ptr->num_free_macs) {
+                                 subsys_ptr->nxt_mac_addr++;
+                            }
+                            else {
+                                subsys_ptr->nxt_mac_addr = subsys_ptr->system_mac_addr;
+                            }
+                        }
+                        else {
+                           /* free macs unavailable in system.
+                               assign system mac to split interface.
+                            */
+                            memset(buf, 0, sizeof(buf));
+                            tmp_p = ops_ether_ulong_long_to_string(buf, subsys_ptr->system_mac_addr);
+                            smap_replace(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+                        }
+
+                        ovsrec_interface_set_hw_intf_info(subports[j], &hw_intf_info);
+                        smap_destroy(&hw_intf_info);
+                    } else {
+                          /* assign mac address to QSFP subport number 1.
+                             assign parent mac address as first subport mac address
+                           */
+                          smap_clone(&hw_intf_info, &subports[j]->hw_intf_info);
+                          memset(buf, 0, sizeof(buf));
+                          tmp_p = ops_ether_ulong_long_to_string(buf, parent_mac_addr);
+                          smap_replace(&hw_intf_info, INTERFACE_HW_INTF_INFO_MAP_MAC_ADDR, tmp_p);
+                          ovsrec_interface_set_hw_intf_info(subports[j], &hw_intf_info);
+                          smap_destroy(&hw_intf_info);
+                    }
                     j++;
                 }
                 k++;
