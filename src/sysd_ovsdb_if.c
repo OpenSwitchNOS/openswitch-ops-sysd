@@ -157,9 +157,11 @@ sysd_initial_interface_add(struct ovsdb_idl_txn *txn,
     }
 
     /* each interface will have unique mac address.
-       below code will assign mac address to SFP ports.
+       below code will assign mac address to SFP/RJ45
+       (non-splittable) ports.
      */
-    if (!strcmp(intf_ptr->connector, INTERFACE_HW_INTF_INFO_MAP_CONNECTOR_SFP_PLUS)) {
+    if (!strcmp(intf_ptr->connector, INTERFACE_HW_INTF_INFO_MAP_CONNECTOR_SFP_PLUS) ||
+        !strcmp(intf_ptr->connector, INTERFACE_HW_INTF_INFO_MAP_CONNECTOR_RJ45)) {
 
         if (subsys_ptr->num_free_macs > 0) {
             memset(buf, 0, sizeof(buf));
