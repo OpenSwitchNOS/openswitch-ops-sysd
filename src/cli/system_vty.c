@@ -40,6 +40,10 @@ VLOG_DEFINE_THIS_MODULE(vtysh_system_cli);
 
 extern struct ovsdb_idl *idl;
 
+/* Show version detail help strings */
+#define SHOW_VERSION_STR           "Displays switch version\n"
+#define SHOW_VERSION_DETAIL_STR    "Show package information\n"
+
 const char *psu_state_string[] = {
     "Absent",
     "Input Fault",
@@ -292,6 +296,61 @@ cli_system_get_all()
     return CMD_SUCCESS;
 }
 
+/*
+ * The get command to read from the ovsdb system table
+ * switch_version column.
+ */
+const char *
+vtysh_ovsdb_switch_version_get(void)
+{
+    const struct ovsrec_system *ovs;
+
+    ovs = ovsrec_system_first(idl);
+    if (ovs == NULL) {
+        VLOG_ERR("unable to retrieve any system table rows");
+        return "";
+    }
+
+    return ovs->switch_version ? ovs->switch_version : "";
+}
+
+/*
+ * The get command to read from the ovsdb system table
+ * software_info:os_name value.
+ */
+const char *
+vtysh_ovsdb_os_name_get(void)
+{
+    const struct ovsrec_system *ovs;
+    const char *os_name = NULL;
+
+    ovs = ovsrec_system_first(idl);
+    if (ovs) {
+        os_name = smap_get(&ovs->software_info, SYSTEM_SOFTWARE_INFO_OS_NAME);
+    }
+
+    return os_name ? os_name : "OpenSwitch";
+}
+
+/* Show version detail */
+void
+vtysh_ovsdb_show_version_detail(void)
+{
+    const struct ovsrec_package_info *row = NULL;
+
+    OVSREC_PACKAGE_INFO_FOR_EACH(row, idl) {
+        if (row) {
+            vty_out(vty, "PACKAGE     : %-128s\n",  row->name);
+            vty_out(vty, "VERSION     : %-128s\n",
+                (row->version[0] == '\0') ? "Not Available" : row->version);
+            vty_out(vty, "SOURCE TYPE : %-128s\n",
+                (row->src_type[0] == '\0') ? "Not Available" : row->src_type);
+            vty_out(vty, "SOURCE URL  : %-128s\n\n",
+                (row->src_url[0] == '\0') ? "Not Available" : row->src_url);
+        }
+    }
+}
+
 
 DEFUN (cli_platform_show_system,
         cli_platform_show_system_cmd,
@@ -300,6 +359,45 @@ DEFUN (cli_platform_show_system,
         SYS_STR)
 {
     return cli_system_get_all();
+}
+
+/* Show version. */
+#ifndef ENABLE_OVSDB
+DEFUN (show_version,
+       show_version_cmd,
+       "show version",
+       SHOW_STR
+       "Displays zebra version\n")
+{
+    vty_out (vty, "%s %s (%s).%s", QUAGGA_PROGNAME, QUAGGA_VERSION,
+             host.name?host.name:"", VTY_NEWLINE);
+    vty_out (vty, "%s%s", GIT_INFO, VTY_NEWLINE);
+
+    return CMD_SUCCESS;
+}
+#else
+DEFUN (show_version,
+       show_version_cmd,
+       "show version",
+       SHOW_STR
+       SHOW_VERSION_STR)
+{
+    vty_out (vty, "%s %s%s", vtysh_ovsdb_os_name_get(),
+             vtysh_ovsdb_switch_version_get(), VTY_NEWLINE);
+    return CMD_SUCCESS;
+}
+#endif /* ENABLE_OVSDB */
+
+/* Show version detail. */
+DEFUN (show_version_detail,
+       show_version_detail_cmd,
+       "show version detail",
+       SHOW_STR
+       SHOW_VERSION_STR
+       SHOW_VERSION_DETAIL_STR)
+{
+  vtysh_ovsdb_show_version_detail();
+  return CMD_SUCCESS;
 }
 
 /*******************************************************************
@@ -346,6 +444,23 @@ system_ovsdb_init()
     ovsdb_idl_add_column(idl, &ovsrec_fan_col_external_ids);
     ovsdb_idl_add_column(idl, &ovsrec_fan_col_speed);
 
+    /* Versioning */
+    /* show version */
+    /* Add software_info column */
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_software_info);
+
+    /* Add switch version column */
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_switch_version);
+
+    /* show version detail */
+    /* Add Package_Info table for show version detail. */
+    ovsdb_idl_add_table(idl, &ovsrec_table_package_info);
+
+    /* Add name, src_url, src_type version column for show version detail. */
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_name);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_version);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_src_type);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_src_url);
 }
 
 
@@ -364,4 +479,10 @@ cli_post_init(void)
 {
     install_element (ENABLE_NODE, &cli_platform_show_system_cmd);
     install_element (VIEW_NODE, &cli_platform_show_system_cmd);
+
+    install_element (ENABLE_NODE, &show_version_cmd);
+    install_element (VIEW_NODE, &show_version_cmd);
+
+    install_element (ENABLE_NODE, &show_version_detail_cmd);
+    install_element (VIEW_NODE, &show_version_detail_cmd);
 }
