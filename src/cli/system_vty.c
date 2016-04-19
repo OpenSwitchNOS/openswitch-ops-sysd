@@ -35,18 +35,11 @@
 #include "openswitch-idl.h"
 #include "vtysh/vtysh_ovsdb_if.h"
 #include "vtysh/vtysh_ovsdb_config.h"
+#include "vtysh/utils/system_vtysh_utils.h"
 
 VLOG_DEFINE_THIS_MODULE(vtysh_system_cli);
 
 extern struct ovsdb_idl *idl;
-
-const char *psu_state_string[] = {
-    "Absent",
-    "Input Fault",
-    "Output Fault",
-    "OK",
-    "Unknown"
-};
 
 /*
  * Function        : compare_fan
@@ -80,11 +73,15 @@ format_psu_string (char* status)
         return NULL;
 
     if (0 == strcmp (status,OVSREC_POWER_SUPPLY_STATUS_FAULT_ABSENT))
-        return psu_state_string[POWER_SUPPLY_STATUS_FAULT_ABSENT];
+        return POWER_SUPPLY_FAULT_ABSENT;
     else if (0 == strcmp (status,OVSREC_POWER_SUPPLY_STATUS_FAULT_INPUT))
-        return psu_state_string[POWER_SUPPLY_STATUS_FAULT_INPUT];
+        return POWER_SUPPLY_FAULT_INPUT;
     else if (0 == strcmp (status,OVSREC_POWER_SUPPLY_STATUS_FAULT_OUTPUT))
-        return psu_state_string[POWER_SUPPLY_STATUS_FAULT_OUTPUT];
+        return POWER_SUPPLY_FAULT_OUTPUT;
+    else if (0 == strcmp(status,OVSREC_POWER_SUPPLY_STATUS_OK))
+        return POWER_SUPPLY_OK;
+    else if (0 == strcmp(status,OVSREC_POWER_SUPPLY_STATUS_UNKNOWN))
+        return POWER_SUPPLY_UNKNOWN;
 
     return NULL;
 }
