@@ -41,4 +41,16 @@ int cli_system_get_all();
 void cli_pre_init(void);
 void cli_post_init(void);
 
+/* must match ovsrec_power_supply_status enum */
+/************************************************************************//**
+ * Char_array containing string values for the power supply status OVSDB readable
+ ***************************************************************************/
+const char *psu_state_ovsdb_string[] = {
+    "Absent",           /*!< string value for POWER_SUPPLY_STATUS_FAULT_ABSENT */
+    "Input Fault",      /*!< string value for POWER_SUPPLY_STATUS_FAULT_INPUT */
+    "Output Fault",     /*!< string value for POWER_SUPPLY_STATUS_FAULT_OUTPUT */
+    "OK",               /*!< string value for POWER_SUPPLY_STATUS_OK */
+    "Unknown"           /*!< string value for POWER_SUPPLY_STATUS_UNKNOWN */
+};
+
 #endif //_SYSTEM_VTY_H
