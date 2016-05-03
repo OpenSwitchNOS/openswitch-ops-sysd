@@ -54,12 +54,12 @@ acl_init_hw_limits(struct ovsdb_idl_txn *txn,
     snprintf(max_aces_str, ACL_HW_LIMIT_BUFFER_SIZE, "%d", acl_info->max_aces);
     snprintf(max_aces_per_acl_str, ACL_HW_LIMIT_BUFFER_SIZE, "%d", acl_info->max_aces_per_acl);
 
-    /* Store acl limitations in other_config column */
-    smap_clone(&smap, &system_row->other_config);
+    /* Store acl limitations in other_info column */
+    smap_clone(&smap, &system_row->other_info);
     smap_replace(&smap, "max_acls", max_acls_str);
     smap_replace(&smap, "max_aces", max_aces_str);
     smap_replace(&smap, "max_aces_per_acl", max_aces_per_acl_str);
-    ovsrec_system_set_other_config(system_row, &smap);
+    ovsrec_system_set_other_info(system_row, &smap);
     smap_destroy(&smap);
     return;
 }
