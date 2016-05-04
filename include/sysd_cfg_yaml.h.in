@@ -32,6 +32,8 @@
 #define DEVICES_YAML HWDESC_FILE_LINK
 #define PORTS_YAML HWDESC_FILE_LINK
 
+#define FRU_YAML_NOT_PRESENT (-2)
+
 #include "sysd_fru.h"
 
 /* Config YAML functions */
