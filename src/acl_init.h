@@ -1,5 +1,5 @@
-/************************************************************************//**
- * (c) Copyright 2015 Hewlett Packard Enterprise Development LP
+/****************************************************************************
+ * (c) Copyright 2015-2016 Hewlett Packard Enterprise Development LP
  *
  *    Licensed under the Apache License, Version 2.0 (the "License"); you may
  *    not use this file except in compliance with the License. You may obtain
@@ -14,26 +14,18 @@
  *    under the License.
  *
  ***************************************************************************/
-/* @ingroup ops-sysd
- *
- * @file
- * Header for ops-sysd OVSDB access functions.
+
+#include <config-yaml.h>
+#include <ops-utils.h>
+#include <stdlib.h>
+#include <sys/types.h>
+
+#include <smap.h>
+#include <util.h>
+#include <vswitch-idl.h>
+
+/**
+ * Initializes factory default acl limits settings in ovsdb.
  */
-
-#ifndef __SYSD_OVSDB_IF_H__
-#define __SYSD_OVSDB_IF_H__
-
-/** @ingroup ops-sysd
- * @{ */
-
-#define SYSD_MAC_FORMAT(a)	a[0], a[1], a[2], a[3], a[4], a[5]
-
-#define SYSD_OVS_PTR_CALLOC(OVS_STR, count)		\
-			(struct  OVS_STR *) calloc(sizeof(struct OVS_STR), count)
-
-void sysd_dump(char* buf, int buflen);
-void sysd_run(void);
-void sysd_wait(void);
-
-/** @} end of group ops-sysd */
-#endif /* __SYSD_OVSDB_IF_H__ */
+void acl_init_limits(struct ovsdb_idl_txn *txn,
+                     struct ovsrec_system *system_row);

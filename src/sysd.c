@@ -44,10 +44,16 @@
 #include "sysd_util.h"
 #include "sysd_ovsdb_if.h"
 
+#include "eventlog.h"
+#include "diag_dump.h"
+
 VLOG_DEFINE_THIS_MODULE(ops_sysd);
 
 /** @ingroup ops-sysd
  * @{ */
+
+#define BUF_LEN 16000
+#define MAX_ERR_STR_LEN 255
 
 /* OVSDB IDL used to obtain configuration. */
 struct ovsdb_idl *idl;
@@ -64,21 +70,51 @@ int num_hw_daemons = 0;
 /* Structure to store management info read */
 mgmt_intf_info_t *mgmt_intf = NULL;
 
+/*
+ * Function       : sysd_diag_dump_basic_cb
+ * Responsibility : callback handler function for diagnostic dump basic
+ *                  it allocates memory as per requirment and populates data.
+ *                  INIT_DIAG_DUMP_BASIC will free allocated memory.
+ * Parameters     : feature name string, buffer ptr
+ * Returns        : void
+ */
+
+static void
+sysd_diag_dump_basic_cb(const char *feature , char **buf)
+{
+    if (!buf)
+        return;
+    *buf =  xcalloc(1, BUF_LEN);
+    if (*buf) {
+        /* populate basic diagnostic data to buffer  */
+        sysd_dump(*buf, BUF_LEN);
+        VLOG_DBG("basic diag-dump data populated for feature %s",
+                feature);
+    } else{
+        VLOG_ERR("Memory allocation failed for feature %s, %d bytes",
+                feature, BUF_LEN);
+    }
+}
+
+/* Dumps debug data for entire daemon */
 static void
 sysd_unixctl_dump(struct unixctl_conn *conn, int argc OVS_UNUSED,
                           const char *argv[] OVS_UNUSED, void *aux OVS_UNUSED)
 {
-    struct ds ds = DS_EMPTY_INITIALIZER;
+    char err_str[MAX_ERR_STR_LEN];
+    char *buf = xcalloc(1, BUF_LEN);
 
-    ds_put_cstr(&ds, "================ Interfaces ================\n");
-
-/*    SHASH_FOR_EACH(sh_node, &all_interfaces) {
-        ds_put_format(&ds, "\n",);
+    /* Dump the daemon info */
+    if (buf){
+        strcpy(buf, "Support Dump for Platform SYS Daemon (ops-sysd)\n\n");
+        sysd_dump(buf, BUF_LEN);
+        unixctl_command_reply(conn, buf);
+        free(buf);
+    } else {
+        snprintf(err_str, sizeof(err_str),
+                "sysd daemon failed to allocate %d bytes\n", BUF_LEN);
+        unixctl_command_reply(conn, err_str);
     }
-*/
-    unixctl_command_reply(conn, ds_cstr(&ds));
-    ds_destroy(&ds);
-
 } /* sysd_unixctl_dump */
 
 static int
@@ -113,6 +149,7 @@ sysd_get_subsystem_info(void)
     rc = sysd_read_fru_eeprom(&(subsystems[0]->fru_eeprom));
     if (rc) {
         VLOG_ERR("Failed to read FRU data from base system.");
+        log_event("SYS_FRU_DATA_READ_FAILURE", NULL);
         return -1;
     }
 
@@ -169,6 +206,8 @@ sysd_get_interface_info(void)
     interfaces = (sysd_intf_info_t **) calloc(intf_count, sizeof(sysd_intf_info_t *));
     if (interfaces == (sysd_intf_info_t **)NULL) {
         VLOG_ERR("Failed to allocate memory for interface strcture.");
+        log_event("SYS_ALLOCATE_MEMORY_FAILURE", EV_KV("value",
+            "%s", "interface structure"));
         return -1;
     }
 
@@ -222,7 +261,10 @@ sysd_ovsdb_conn_init(char *remote)
     ovsdb_idl_omit_alert(idl, &ovsrec_system_col_cur_hw);
     ovsdb_idl_add_column(idl, &ovsrec_system_col_next_hw);
     ovsdb_idl_omit_alert(idl, &ovsrec_system_col_next_hw);
-    /* Add column for the Software version */
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_other_info);
+    ovsdb_idl_omit_alert(idl, &ovsrec_system_col_other_info);
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_software_info);
+    ovsdb_idl_omit_alert(idl, &ovsrec_system_col_software_info);
     ovsdb_idl_add_column(idl, &ovsrec_system_col_switch_version);
     ovsdb_idl_omit_alert(idl, &ovsrec_system_col_switch_version);
 
@@ -257,6 +299,20 @@ sysd_ovsdb_conn_init(char *remote)
 
     /* Management Interface Column*/
     ovsdb_idl_add_column(idl, &ovsrec_system_col_mgmt_intf);
+
+    /* Package_Info Table */
+    ovsdb_idl_add_table(idl, &ovsrec_table_package_info);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_name);
+    ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_name);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_src_type);
+    ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_src_type);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_src_url);
+    ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_src_url);
+    ovsdb_idl_add_column(idl, &ovsrec_package_info_col_version);
+    ovsdb_idl_omit_alert(idl, &ovsrec_package_info_col_version);
+
+    INIT_DIAG_DUMP_BASIC(sysd_diag_dump_basic_cb);
+
     return;
 
 } /* sysd_ovsdb_conn_init */
@@ -361,6 +417,7 @@ main(int argc, char *argv[])
     char    *ovsdb_sock = NULL;
     int     rc = 0;
     int     exiting = 0;
+    int     retval;
 
     struct unixctl_server   *appctl = NULL;
 
@@ -376,6 +433,11 @@ main(int argc, char *argv[])
     /* Fork and return in child process; but don't notify parent of
      * startup completion yet. */
     daemonize_start();
+
+    retval = event_log_init("SYS");
+    if(retval < 0) {
+        VLOG_ERR("Event log initialization failed for SYS");
+    }
 
     /* Create UDS connection for ovs-appctl. */
     rc = unixctl_server_create(appctl_path, &appctl);
