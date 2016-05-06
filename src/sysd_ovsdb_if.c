@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -40,14 +41,39 @@
 
 #include <ops-utils.h>
 #include <config-yaml.h>
+#include <yaml.h>
+#include "qos_init.h"
+#include "acl_init.h"
 #include "sysd.h"
 #include "sysd_util.h"
 #include "sysd_ovsdb_if.h"
+#include "eventlog.h"
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_if);
 
 /** @ingroup sysd
  * @{ */
+#define PKG_INFO_ENTRIES_PER_COMMIT 2000
+#define REM_BUF_LEN (buflen - 1 - strlen(buf))
+
+enum {
+    VALUE,
+    PKG,
+    PV,
+    SRCREV,
+    SRC_URL,
+    TYPE,
+    MAX_NUM_KEYS
+};
+
+const char * keystr_pkg_info[MAX_NUM_KEYS] = {
+    "values",
+    "PKG",
+    "PV",
+    "SRCREV",
+    "SRC_URL",
+    "TYPE",
+};
 
 extern char *g_hw_desc_dir;
 
@@ -119,7 +145,9 @@ sysd_initial_interface_add(struct ovsdb_idl_txn *txn,
         if ((strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_SPLIT_4) != 0)  &&
             (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET1G)  != 0)  &&
             (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET10G) != 0)  &&
-            (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET40G) != 0)) {
+            (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET25G) != 0)  &&
+            (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET40G) != 0)  &&
+            (strcmp(*cap_p, INTERFACE_HW_INTF_INFO_MAP_ENET100G) != 0)) {
 
             VLOG_INFO("subsystem[%s]:interface[%s] - adding unknown "
                       "interface capability[%s]",
@@ -283,6 +311,8 @@ sysd_initial_subsystem_add(struct ovsdb_idl_txn *txn, sysd_subsystem_t *subsys_p
     ovs_intf = SYSD_OVS_PTR_CALLOC(ovsrec_interface *, subsys_ptr->intf_count);
     if (ovs_intf == NULL) {
         VLOG_ERR("Failed to allocate memory for OVS subsystem interfaces.");
+        log_event("SYS_ALLOCATE_MEMORY_FAILURE", EV_KV("value",
+            "%s", "OVS subsystem interfaces"));
         return ovs_subsys;
     }
 
@@ -381,57 +411,265 @@ sysd_configure_default_vrf(struct ovsdb_idl_txn *txn,
 
 }/* sysd_configure_default_vrf */
 
-/* Function to update the switch version of the OVSDB from the Release file*/
-static void
-sysd_update_switch_version(const struct ovsrec_system *cfg)
+/*
+ * Helper function to parse version_detail yaml file.
+ */
+static int
+package_info_mapping_check_key(const char *data)
 {
+    int i = PKG;
+    for (i = PKG; i < MAX_NUM_KEYS; i++) {
+        if ((data != NULL) && (keystr_pkg_info[i] != NULL) &&
+            (!strcmp(keystr_pkg_info[i], data))) {
+            return i;
+        }
+    }
+    /* Data didn't match any of the token names, hence it should be a value */
+    return VALUE;
+}
+
+/*
+ * Function to populate source url, type and version of each package/daemon
+ * extracted from /var/lib/version_detail.yaml file to "Package_Info"
+ * table in OVSDB.
+ */
+static void
+sysd_add_package_info()
+{
+    FILE * fh         = NULL;
+    int event_value   = 0;
+    int current_state = 0;
+    int record_count  = 0;
+    int done          = 0;
+    yaml_parser_t parser;
+    yaml_event_t event;
+    struct ovsrec_package_info *row  = NULL;
+    struct ovsdb_idl_txn       *txn  = NULL;
+    enum ovsdb_idl_txn_status  txn_status = TXN_ERROR;
+
+    /* Initialize parser */
+    if (!yaml_parser_initialize(&parser)) {
+        VLOG_ERR("Failed to initialize parser\n");
+        return;
+    }
+
+    /* Open /var/lib/version_detail.yaml file */
+    fh = fopen(VERSION_DETAIL_FILE_PATH, "r");
+    if (NULL == fh) {
+        VLOG_ERR("Failed to open file %s\n",VERSION_DETAIL_FILE_PATH);
+        yaml_parser_delete(&parser);
+        return;
+    }
+
+    /* Set input file */
+    yaml_parser_set_input_file(&parser, fh);
+
+    /*
+     * Parse version_detail file line-wise to extract package/daemon name,
+     * corresponding type, version and its source-URL.
+     */
+
+    while (!done) {
+
+        if (!yaml_parser_parse(&parser, &event)) {
+            break;
+        }
+
+        if (event.type == YAML_SCALAR_EVENT) {
+            event_value = package_info_mapping_check_key ((const char *)
+            event.data.scalar.value);
+            switch (event_value) {
+                case VALUE:
+                {
+                    switch(current_state) {
+                        case PKG:
+                            if ((record_count % PKG_INFO_ENTRIES_PER_COMMIT) == 0) {
+                                txn = ovsdb_idl_txn_create(idl);
+                            }
+                            row = ovsrec_package_info_insert(txn);
+                            if (NULL == row) {
+                                VLOG_ERR("Could not insert a row into DB\n");
+                                /* Cleanup */
+                                yaml_event_delete(&event);
+                                yaml_parser_delete(&parser);
+                                fclose(fh);
+                                ovsdb_idl_txn_destroy(txn);
+                                return;
+                            }
+                            ovsrec_package_info_set_name(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case PV:
+                            ovsrec_package_info_set_version(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case SRCREV:
+                            if(((const char*)event.data.scalar.value != NULL)
+                            && strcmp((const char*)event.data.scalar.value,
+                            "INVALID")) {
+                                ovsrec_package_info_set_version(row,
+                                (const char *)event.data.scalar.value);
+                            }
+                            break;
+                        case SRC_URL:
+                            ovsrec_package_info_set_src_url(row,
+                            (const char *)event.data.scalar.value);
+                            break;
+                        case TYPE:
+                            record_count++;
+                            ovsrec_package_info_set_src_type(row,
+                            (const char *)event.data.scalar.value);
+
+                            /*
+                             * Commit the transaction for every
+                             * PKG_INFO_ENTRIES_PER_COMMIT entries
+                             */
+                            if ((record_count % PKG_INFO_ENTRIES_PER_COMMIT)
+                                == 0) {
+                                txn_status = ovsdb_idl_txn_commit_block(txn);
+                                VLOG_INFO("Populating Package_Info with"
+                                          "%d entries\n", record_count);
+                                if (txn_status != TXN_SUCCESS) {
+                                    VLOG_ERR("Commit failed to Package_Info."
+                                             "rc = %u", txn_status);
+                                }
+                                ovsdb_idl_txn_destroy(txn);
+                                txn = NULL;
+                            }
+                            break;
+                    }
+                }
+                break;
+                case PKG:
+                    current_state = PKG;
+                    break;
+                case PV:
+                    current_state = PV;
+                    break;
+                case SRCREV:
+                    current_state = SRCREV;
+                    break;
+                case SRC_URL:
+                    current_state = SRC_URL;
+                    break;
+                case TYPE:
+                    current_state = TYPE;
+                    break;
+            }
+        }
+
+        done = (event.type == YAML_STREAM_END_EVENT);
+
+        yaml_event_delete(&event);
+    }
+
+    if (txn != NULL) {
+        txn_status = ovsdb_idl_txn_commit_block(txn);
+        VLOG_INFO("Populating Package_Info with %d entries\n", record_count);
+        if (txn_status != TXN_SUCCESS) {
+            VLOG_ERR("Commit failed to Package_Info. rc = %u", txn_status);
+        }
+        ovsdb_idl_txn_destroy(txn);
+        txn = NULL;
+    }
+
+    /* Cleanup */
+    yaml_parser_delete(&parser);
+    fclose(fh);
+
+} /* sysd_add_package_info */
+
+/*
+ * Function to update the software info, e.g. software name, switch version,
+ * in the OVSDB retrieved from the Release file.
+ */
+static void
+sysd_update_sw_info(const struct ovsrec_system *cfg)
+{
+#define NSTR  80 /* Max length of each line of /etc/os-release. */
+    struct smap smap = SMAP_INITIALIZER(&smap);
     FILE   *os_ver_fp = NULL;
-    char   *file_line = NULL;
-    char   file_var_name[64] = "";
-    char   file_var_value[64] = "";
-    char   build_id_value[32] = "";
-    char   version_id_value[32] = "";
-    size_t line_len;
+    char   *line = NULL;
+    char   *value;
+    char   *name;
+    char   version_id[NSTR];
+    char   build_id[NSTR];
+    char   build_str[NSTR];
+    size_t line_len = 0;
+    int i;
 
     /* Open os-release file with the os version information */
     os_ver_fp = fopen(OS_RELEASE_FILE_PATH, "r");
     if (NULL == os_ver_fp) {
-        VLOG_ERR("Unable to find system OS release. File %s was not found", OS_RELEASE_FILE_PATH);
+        VLOG_ERR("Unable to find system OS release. File %s was not found",
+                 OS_RELEASE_FILE_PATH);
         return;
     }
 
+    /* Initialize the version_id and build_id to avoid the ops-sysd crash */
+    version_id[0] = build_id[0] = '\0';
+
     /* Scanning file for variables */
-    while (getline(&file_line, &line_len, os_ver_fp) != -1) {
-        sscanf(file_line, "%[^=]=%s", file_var_name, file_var_value);
+    while (getline(&line, &line_len, os_ver_fp) != -1) {
+        if (line == NULL || (value = strchr(line, '=')) == NULL) {
+            /* Skip the line. */
+            continue;
+        }
+        name = line;
+        value[0] = '\0'; /* Terminate the name string. */
+        ++value;
+        /* Terminate the value string. */
+        for (i = strlen(value) - 1; i >= 0; --i) {
+            if (!isspace(value[i])) {
+                break;
+            }
+        }
+        value[++i] = '\0';
+
+        /* Release name value.  */
+        if (strcmp(name, OS_RELEASE_NAME) == 0 && value[0] != '\0') {
+            smap_add(&smap, SYSTEM_SOFTWARE_INFO_OS_NAME, value);
 
         /* Version ID value*/
-        if (strcmp(file_var_name, OS_RELEASE_VERSION_NAME) == 0) {
-            strcpy(version_id_value, file_var_value);
-        }
+        } else if (strcmp(name, OS_RELEASE_VERSION_NAME) == 0) {
+            strncpy(version_id, value, NSTR - 1);
+            /* in case file_var_value is longer than NSTR - 1 */
+            version_id[NSTR - 1] = '\0';
 
         /* Build ID value*/
-        if (strcmp(file_var_name, OS_RELEASE_BUILD_NAME) == 0) {
-            strcpy(build_id_value, file_var_value);
+        } else if (strcmp(name, OS_RELEASE_BUILD_NAME) == 0) {
+            strncpy(build_id, value, NSTR - 1);
+            /* in case file_var_value is longer than NSTR - 1 */
+            build_id[NSTR - 1] = '\0';
         }
     }
     fclose(os_ver_fp);
+    if (line != NULL) {
+        /*
+         * As getline(3) explains, caller of the getline() needs to
+         * free the dynamically allocated memory.
+         */
+        free(line);
+    }
+
+    /* Update the software info column. */
+    if (!smap_is_empty(&smap)) {
+        ovsrec_system_set_software_info(cfg, &smap);
+    }
+    smap_destroy(&smap);
 
     /* Check if version id and build id was found*/
-    if ( (strlen(build_id_value) != 0) && (strlen(version_id_value) != 0) ) {
-
-        /* Cleaning the variable where the switch version will be save */
-        memset(file_var_value, 0, sizeof(char) * 64);
-
+    if (build_id[0] != '\0' && version_id[0] != '\0') {
         /* Building the version string */
-        snprintf(file_var_value, 64,"%s (Build: %s)", version_id_value, build_id_value);
-
-        ovsrec_system_set_switch_version(cfg, file_var_value);
+        snprintf(build_str, NSTR, "%s (Build: %s)", version_id, build_id);
+        ovsrec_system_set_switch_version(cfg, build_str);
     } else {
-        VLOG_ERR("%s or %s was not found on %s", OS_RELEASE_VERSION_NAME, OS_RELEASE_BUILD_NAME, OS_RELEASE_FILE_PATH);
+        VLOG_ERR("%s or %s was not found on %s", OS_RELEASE_VERSION_NAME,
+                 OS_RELEASE_BUILD_NAME, OS_RELEASE_FILE_PATH);
         return;
     }
 
-} /* sysd_update_switch_version */
+} /* sysd_update_sw_info */
 
 void
 sysd_initial_configure(struct ovsdb_idl_txn *txn)
@@ -480,6 +718,8 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
     ovs_subsys_l = SYSD_OVS_PTR_CALLOC(ovsrec_subsystem *, num_subsystems);
     if (ovs_subsys_l == NULL) {
         VLOG_ERR("Failed to allocate memory for OVS subsystem.");
+        log_event("SYS_ALLOCATE_MEMORY_FAILURE", EV_KV("value",
+            "%s", "OVS subsystem"));
         return;
     }
 
@@ -493,6 +733,8 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
     ovs_daemon_l = SYSD_OVS_PTR_CALLOC(ovsrec_daemon *, num_daemons);
     if (ovs_daemon_l == NULL) {
         VLOG_ERR("Failed to allocate memory for OVS daemon table.");
+        log_event("SYS_ALLOCATE_MEMORY_FAILURE", EV_KV("value",
+            "%s", "OVS daemon table"));
         return;
     }
 
@@ -504,9 +746,20 @@ sysd_initial_configure(struct ovsdb_idl_txn *txn)
         ovsrec_system_set_daemons(sys, ovs_daemon_l, num_daemons);
     }
 
-    /* Update the switch version for the new config */
-    sysd_update_switch_version(sys);
+    /*
+     * Update the software info, including the switch version,
+     * for the new config
+     */
+    sysd_update_sw_info(sys);
 
+    /* QoS init */
+    qos_init_trust(txn, sys);
+    qos_init_dscp_map(txn, sys);
+    qos_init_cos_map(txn, sys);
+    qos_init_queue_profile(txn, sys);
+    qos_init_schedule_profile(txn, sys);
+    /* ACL init */
+    acl_init_limits(txn, sys);
 } /* sysd_initial_configure */
 
 static void
@@ -640,12 +893,17 @@ sysd_run(void)
             }
             ovsdb_idl_txn_destroy(txn);
         } else {
-            /* Static function to read the os-release function */
-            sysd_update_switch_version(cfg);
+            /* Update the software information. */
+            sysd_update_sw_info(cfg);
 
             if (!hw_init_done_set) {
                 sysd_chk_if_hw_daemons_done();
             }
+        }
+
+        /* Populate source url and version of packages/daemon present in image */
+        if (ovsrec_package_info_first(idl) == NULL) {
+            sysd_add_package_info();
         }
     }
 
@@ -653,6 +911,44 @@ sysd_run(void)
     daemonize_complete();
 
 } /* sysd_run */
+
+/*
+ * Function       : sysd_dump
+ * Responsibility : populates buffer for unixctl reply
+ * Parameters     : buffer, buffer length
+ * Returns        : void
+ */
+
+void
+sysd_dump(char* buf, int buflen)
+{
+    char tmp_buf[100];
+    int i = 0;
+
+    /* Loop through all daemons */
+
+    strcpy(buf, "=============== Daemon Info =========================\n");
+    strncat(buf, "Name\t\t\tis_hw_handler\t\t\tcur_hw\n", REM_BUF_LEN);
+
+    while((num_hw_daemons - 1) >= i) {
+        strncat(buf, daemons[i]->name, REM_BUF_LEN);
+        strncat(buf, "\t\t\t", REM_BUF_LEN);
+        sprintf(tmp_buf, "%d", daemons[i]->is_hw_handler);
+        strncat(buf, tmp_buf, REM_BUF_LEN);
+        strncat(buf, "\t\t\t", REM_BUF_LEN);
+        strcpy(tmp_buf, "\0");
+        sprintf(tmp_buf, "%ld", daemons[i]->cur_hw);
+        strncat(buf, tmp_buf, REM_BUF_LEN);
+        strncat(buf, "\n", REM_BUF_LEN);
+        i++;
+    }
+
+    /* mgmt_intf */
+    strncat(buf, "=============== Mgmt_intf Info ==========================\n",
+            REM_BUF_LEN);
+    strncat(buf, mgmt_intf->name, REM_BUF_LEN);
+    strncat(buf, "\n", REM_BUF_LEN);
+}
 
 void
 sysd_wait(void)
