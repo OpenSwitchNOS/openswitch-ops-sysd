@@ -499,7 +499,16 @@ main(int argc, char *argv[])
 
         sysd_wait();
         unixctl_server_wait(appctl);
-        if (exiting) {
+        if (idl_seqno != ovsdb_idl_get_seqno(idl)) {
+            /* IDL seqno could have changed because of the ovsdb_idl_run()
+             * called from the ovsdb_idl_txn_commit_block() calls inside
+             * sysd. This could happen when DB transactions get posted
+             * while sysd is inside sysd_run(). When this happens,
+             * ovsdb_idl_txn_commit_block() could clear any pending fd poll
+             * status and could cause the poll_block() below to wait forever.
+             */
+            VLOG_DBG("IDL has changed. Continue to see what changed..");
+        } else if (exiting) {
             poll_immediate_wake();
         } else {
             poll_block();
