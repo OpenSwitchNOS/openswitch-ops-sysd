@@ -47,6 +47,22 @@
 #include "eventlog.h"
 #include "diag_dump.h"
 
+#define TIMEZONE_STR "Timezone information\n"
+#define TIMEZONE_SET_STR "Sets Timezone configuration\n"
+#define TIMEZONE_PLACEHOLDER_STR "Timezone Info\n"
+#define DEFAULT_TIMEZONE "utc"
+#define MAX_TIMEZONES          900
+#define MAX_TIMEZONE_NAME_SIZE 100
+#define MAX_TIMEZONE_CMD_SIZE  (MAX_TIMEZONES*MAX_TIMEZONE_NAME_SIZE)
+#define MAX_TIMEZONE_HELP_SIZE 100
+#define MAX_TIMEZONES_HELP_SIZE  (MAX_TIMEZONES*MAX_TIMEZONE_HELP_SIZE)
+static int zone_count = 0;
+static char base_path[100] = "/usr/share/zoneinfo/posix/";
+char list_of_zones[MAX_TIMEZONES][MAX_TIMEZONE_NAME_SIZE];
+char list_of_zones_caps[MAX_TIMEZONES][MAX_TIMEZONE_NAME_SIZE];
+void find_posix_timezones_and_add_to_list(const char *name, int level, char *cmd, char *help);
+
+
 VLOG_DEFINE_THIS_MODULE(ops_sysd);
 
 /** @ingroup ops-sysd
@@ -268,6 +284,7 @@ sysd_ovsdb_conn_init(char *remote)
     ovsdb_idl_omit_alert(idl, &ovsrec_system_col_software_info);
     ovsdb_idl_add_column(idl, &ovsrec_system_col_switch_version);
     ovsdb_idl_omit_alert(idl, &ovsrec_system_col_switch_version);
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_timezone);
 
     ovsdb_idl_add_table(idl, &ovsrec_table_subsystem);
     ovsdb_idl_add_column(idl, &ovsrec_subsystem_col_name);
@@ -300,6 +317,7 @@ sysd_ovsdb_conn_init(char *remote)
 
     /* Management Interface Column*/
     ovsdb_idl_add_column(idl, &ovsrec_system_col_mgmt_intf);
+    ovsdb_idl_add_column(idl, &ovsrec_system_col_mgmt_intf_status);
 
     /* Package_Info Table */
     ovsdb_idl_add_table(idl, &ovsrec_table_package_info);
@@ -412,6 +430,106 @@ sysd_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
 
 } /* sysd_exit */
 
+int system_install_timezone_set_command()
+{
+    char *help = NULL, *help_no_form = NULL;
+    char *cmd = NULL, *cmd_no_form = NULL;
+
+    cmd  = (char*)calloc(MAX_TIMEZONES, MAX_TIMEZONE_NAME_SIZE);
+    help = (char*)calloc(MAX_TIMEZONES, MAX_TIMEZONE_HELP_SIZE);
+    cmd_no_form  = (char*)calloc(MAX_TIMEZONES, MAX_TIMEZONE_NAME_SIZE);
+    help_no_form = (char*)calloc(MAX_TIMEZONES, MAX_TIMEZONE_HELP_SIZE);
+
+    if(!cmd && !help && !cmd_no_form && !help_no_form) {
+        VLOG_ERR("Memory allocation failure");
+        return -1;
+    }
+
+    strncpy(cmd, "timezone set (", (MAX_TIMEZONE_CMD_SIZE-1));
+    strncpy(cmd_no_form, "no ", (MAX_TIMEZONE_CMD_SIZE-1));
+    strncpy(help, cli_platform_timezone_set_cmd.doc,
+       (MAX_TIMEZONES_HELP_SIZE-1));
+    strncpy(help_no_form, cli_platform_timezone_set_cmd_no_form.doc,
+         (MAX_TIMEZONES_HELP_SIZE-1));
+
+    find_posix_timezones_and_add_to_list("/usr/share/zoneinfo/posix", 0, cmd, help);
+
+    strncat(cmd, ")", (MAX_TIMEZONE_CMD_SIZE - strlen(cmd)));
+    strncat(cmd_no_form, cmd, strlen(cmd));
+    strncpy(help_no_form, help, strlen(help));
+
+    cli_platform_timezone_set_cmd.string = cmd;
+    cli_platform_timezone_set_cmd.doc = help;
+
+    cli_platform_timezone_set_cmd_no_form.string = cmd_no_form;
+    cli_platform_timezone_set_cmd_no_form.doc = help_no_form;
+
+    //Installing element with CONFIG_NODE
+    install_element (CONFIG_NODE, &cli_platform_timezone_set_cmd);
+    install_element (CONFIG_NODE, &cli_platform_timezone_set_cmd_no_form);
+    return 0;
+}
+
+void populate_zone_db(char *zone, char *zone_caps)
+{
+  strcpy(&list_of_zones[zone_count][0], zone);
+  strcpy(&list_of_zones_caps[zone_count][0], zone_caps);
+  zone_count++;
+}
+
+void add_info_to_cmd_options(char *timezone, char *cmd, char *help)
+{
+    char zone_caps[MAX_TIMEZONE_NAME_SIZE];
+    int i = 0;
+    memset(&zone_caps[0], 0, sizeof(zone_caps));
+
+    strcat(help, timezone);
+    strcat(help, " Zone \n");
+    strcpy(zone_caps, timezone);
+    for (i=0;i<strlen(timezone);i++) {
+      timezone[i] = tolower(timezone[i]);
+    }
+    strcat(cmd, timezone);
+    strcat(cmd, " | ");
+    populate_zone_db(timezone, zone_caps);
+}
+
+void remove_base_path(char *full_path,const char *base_path)
+{
+  while( (full_path=strstr(full_path,base_path)) && (full_path!=NULL) )
+    memmove(full_path,full_path+strlen(base_path),1+strlen(full_path+strlen(base_path)));
+}
+
+void find_posix_timezones_and_add_to_list(const char *name, int level, char *cmd, char *help)
+{
+  DIR *dir;
+  struct dirent *entry;
+  char local_dir[100];
+  char path[1024];
+  int len;
+  if (!(dir = opendir(name)))
+      return;
+  if (!(entry = readdir(dir)))
+      return;
+
+  do {
+      if (entry->d_type == DT_DIR) {
+          len = snprintf(path, sizeof(path)-1, "%s/%s", name, entry->d_name);
+          path[len] = 0;
+          if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+              continue;
+          find_posix_timezones_and_add_to_list(path, level + 1, cmd, help);
+      }
+      else {
+          int ilen = snprintf(local_dir, sizeof(local_dir)-1, "%s/%s", name, entry->d_name);
+          local_dir[ilen] = 0;
+          remove_base_path(local_dir, base_path);
+          add_info_to_cmd_options(local_dir, cmd, help);
+      }
+  } while ((entry = readdir(dir)) && (entry != NULL));
+  closedir(dir);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -496,7 +614,6 @@ main(int argc, char *argv[])
     while (!exiting) {
         sysd_run();
         unixctl_server_run(appctl);
-
         sysd_wait();
         unixctl_server_wait(appctl);
         if (idl_seqno != ovsdb_idl_get_seqno(idl)) {
@@ -508,7 +625,7 @@ main(int argc, char *argv[])
              * status and could cause the poll_block() below to wait
              * until the next DB transaction happened, if any at all..
              */
-            VLOG_DBG("IDL has changed. Continue to see what changed..");
+            VLOG_ERR("IDL has changed. Continue to see what changed..");
         } else if (exiting) {
             poll_immediate_wake();
         } else {
