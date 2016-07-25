@@ -53,7 +53,7 @@ class SystemValidator(BaseValidator):
     def validate_modification(self, validation_args):
         system_row = validation_args.resource_row
         if hasattr(system_row, "timezone"):
-            timezone = get_column_data_from_row(system_row, "timezone")
+            timezone = get_column_data_from_row(system_row, "timezone")[0]
             if (check_valid_timezone(timezone) is False):
                 details = "Invalid timezone %s." % (timezone)
                 raise ValidationError(error.VERIFICATION_FAILED, details)
