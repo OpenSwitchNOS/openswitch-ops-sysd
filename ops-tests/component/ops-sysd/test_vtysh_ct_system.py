@@ -72,6 +72,7 @@ def test_vtysh_ct_system(topology, step):  # noqa
     lines = output.split('\n')
     for line in lines:
         if 'OpenSwitch Version' in line:
+            step("OK: OpenSwitch Version")
             counter += 1
         if 'Manufacturer' in line:
             output = sw1('list Subsystem', shell='vsctl')
@@ -85,6 +86,7 @@ def test_vtysh_ct_system(topology, step):  # noqa
                     manufacturer = manufacturer_value.strip()
             if manufacturer is not None and manufacturer in line:
                 counter += 1
+                step("OK: Manufacturer not none")
         if "Interface Count" in line:
             output = sw1('list Subsystem', shell='vsctl')
             lines_ = output.split('\n')
@@ -97,6 +99,7 @@ def test_vtysh_ct_system(topology, step):  # noqa
                     interface_count = interface_value.strip().replace('"', "")
             if interface_count is not None and interface_count in line[:-32]:
                 counter += 1
+                step("OK: Interface Count not none")
         if 'Max Interface Speed' in line:
             output = sw1('list Subsystem', shell='vsctl')
             lines_ = output.split('\n')
@@ -111,14 +114,19 @@ def test_vtysh_ct_system(topology, step):  # noqa
                     interface_speed = interface_speed.replace('"', "")
             if interface_speed is not None and interface_speed in line[42:]:
                 counter += 1
-        if "Led_base" in line:
+                step("OK: Max Interface Speed not none")
+        if "LED details:" in line:
             counter += 1
-        if "Fan_base" in line:
+            step("OK: LED details")
+        if "Fan details:" in line:
             counter += 1
-        if "Psu_base" in line:
+            step("Fan details")
+        if "Power supply details:" in line:
             counter += 1
-        if "Temp_base" in line:
+            step("OK: Power supply details")
+        if "Temperature Sensors:" in line:
             counter += 1
+            step("OK: Temperature Sensors")
     assert counter is 8
     step("3-Test to verify show system timezone command")
     output = sw1('show system timezone')
