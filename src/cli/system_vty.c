@@ -357,7 +357,7 @@ DEFUN_NOLOCK ( vtysh_show_date,
  * Return          : Returns CMD_SUCCESS on successful completion
  */
 
-DEFUN_NOLOCK ( vtysh_show_system_timezone,
+DEFUN ( vtysh_show_system_timezone,
         vtysh_show_system_timezone_cmd,
         "show system timezone",
         SHOW_STR
@@ -427,7 +427,7 @@ int translate_cmd_to_filepath(char *timezone_cmd, char *timezone_info) {
   int i = 0;
   for (i=0;i<zone_count;i++) {
     if (strcmp(list_of_zones[i], timezone_cmd) == 0) {
-      strcpy(timezone_info, list_of_zones[i]);
+      strncpy(timezone_info, list_of_zones[i], strlen(list_of_zones[i]));
       return i;
     }
   }
@@ -454,7 +454,7 @@ int cli_set_timezone(char *timezone_info, int no_flags) {
 
     memset(timezone, 0, sizeof(timezone));
     memset(timezone_cmd, 0, sizeof(timezone_cmd));
-    strcpy(timezone_cmd, DEFAULT_TIMEZONE);
+    strncpy(timezone_cmd, DEFAULT_TIMEZONE,strlen(DEFAULT_TIMEZONE));
     memset(timezone_from_ovsdb, 0, sizeof(timezone_from_ovsdb));
     ovs = ovsrec_system_first(idl);
     if (ovs) {
@@ -467,14 +467,14 @@ int cli_set_timezone(char *timezone_info, int no_flags) {
             ovsdb_timezone = data->keys->string;
             if (ovsdb_timezone != NULL)
             {
-                strcpy(timezone_from_ovsdb, ovsdb_timezone);
+                strncpy(timezone_from_ovsdb, ovsdb_timezone, strlen(ovsdb_timezone));
                 for (i=0;i<strlen(timezone_from_ovsdb);i++) {
                   timezone_from_ovsdb[i] = tolower(timezone_from_ovsdb[i]);
                 }
                 if (no_flags && (strcmp(timezone_from_ovsdb, timezone_info) == 0)) {
-                  strcpy(timezone_cmd, DEFAULT_TIMEZONE);
+                  strncpy(timezone_cmd, DEFAULT_TIMEZONE, strlen(DEFAULT_TIMEZONE));
                 } else if (!no_flags) {
-                  strcpy(timezone_cmd, timezone_info);
+                  strncpy(timezone_cmd, timezone_info, strlen(timezone_info));
                 } else {
                   cli_do_config_abort(status_txn);
                   vty_out(vty, "%s %s%s", "Timezone configured is", timezone_from_ovsdb, VTY_NEWLINE);
@@ -489,7 +489,7 @@ int cli_set_timezone(char *timezone_info, int no_flags) {
               return CMD_ERR_NO_MATCH;
             }
             strcpy(timezone_cmd, "/usr/share/zoneinfo/posix");
-            strcat(timezone_cmd, list_of_zones_caps[ret_val]);
+            strncat(timezone_cmd, list_of_zones_caps[ret_val], strlen(list_of_zones_caps[ret_val]));
 
             ovsrec_system_set_timezone(ovs, list_of_zones_caps[ret_val]);
             status = cli_do_config_finish(status_txn);
@@ -632,8 +632,8 @@ int system_install_timezone_set_command()
  */
 void populate_zone_db(char *zone, char *zone_caps)
 {
-  strcpy(&list_of_zones[zone_count][0], zone);
-  strcpy(&list_of_zones_caps[zone_count][0], zone_caps);
+  strncpy(&list_of_zones[zone_count][0], zone, strlen(zone));
+  strncpy(&list_of_zones_caps[zone_count][0], zone_caps, strlen(zone_caps));
   zone_count++;
 }
 
@@ -647,13 +647,13 @@ void add_info_to_cmd_options(char *timezone, char *cmd, char *help)
     int i = 0;
     memset(&zone_caps[0], 0, sizeof(zone_caps));
 
-    strcat(help, timezone);
+    strncat(help, timezone, strlen(timezone));
     strcat(help, " Zone \n");
-    strcpy(zone_caps, timezone);
+    strncpy(zone_caps, timezone, strlen(timezone));
     for (i=0;i<strlen(timezone);i++) {
       timezone[i] = tolower(timezone[i]);
     }
-    strcat(cmd, timezone);
+    strncat(cmd, timezone, strlen(timezone));
     strcat(cmd, " | ");
     populate_zone_db(timezone, zone_caps);
 }
@@ -730,7 +730,7 @@ vtysh_config_context_timezone_callback(void *p_private)
         ovsdb_timezone = data->keys->string;
         if (ovsdb_timezone != NULL)
         {
-            strcpy(timezone, ovsdb_timezone);
+            strncpy(timezone, ovsdb_timezone, strlen(ovsdb_timezone));
             for (i=0;i<strlen(timezone);i++) {
               timezone[i] = tolower(timezone[i]);
             }

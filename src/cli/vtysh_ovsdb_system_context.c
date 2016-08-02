@@ -48,7 +48,7 @@ vtysh_config_context_system_callback(void *p_private)
     vtysh_ovsdb_config_logmsg(VTYSH_OVSDB_CONFIG_DBG,
                               "vtysh_config_context_timezone_callback entered");
     vswrow = ovsrec_system_first(p_msg->idl);
-
+    memset(&timezone[0],0,sizeof(timezone));
     if(vswrow)
     {
         data = ovsrec_system_get_timezone(vswrow, OVSDB_TYPE_STRING);

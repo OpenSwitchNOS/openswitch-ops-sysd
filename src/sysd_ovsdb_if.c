@@ -694,12 +694,11 @@ sysd_handle_timezone_update(const struct ovsrec_system *cfg)
     {
         data = ovsrec_system_get_timezone(cfg, OVSDB_TYPE_STRING);
         ovsdb_timezone = data->keys->string;
-        VLOG_ERR("1 sysd_handle_timezone_update : run \n");
         if (ovsdb_timezone != NULL)
         {
           memset(&timezone_cmd[0], 0, sizeof(timezone_cmd));
-          strcpy(timezone_cmd, base_path);
-          strcat(timezone_cmd, ovsdb_timezone);
+          strncpy(timezone_cmd, base_path, strlen(base_path));
+          strncat(timezone_cmd, ovsdb_timezone, strlen(ovsdb_timezone));
           unlink("/etc/localtime");
           ret_val = symlink(timezone_cmd, "/etc/localtime");
           if (ret_val < 0) {
