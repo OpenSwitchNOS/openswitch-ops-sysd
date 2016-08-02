@@ -694,7 +694,6 @@ sysd_handle_timezone_update(const struct ovsrec_system *cfg)
     {
         data = ovsrec_system_get_timezone(cfg, OVSDB_TYPE_STRING);
         ovsdb_timezone = data->keys->string;
-        VLOG_ERR("1 sysd_handle_timezone_update : run \n");
         if (ovsdb_timezone != NULL)
         {
           memset(&timezone_cmd[0], 0, sizeof(timezone_cmd));

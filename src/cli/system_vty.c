@@ -357,7 +357,7 @@ DEFUN_NOLOCK ( vtysh_show_date,
  * Return          : Returns CMD_SUCCESS on successful completion
  */
 
-DEFUN_NOLOCK ( vtysh_show_system_timezone,
+DEFUN ( vtysh_show_system_timezone,
         vtysh_show_system_timezone_cmd,
         "show system timezone",
         SHOW_STR
